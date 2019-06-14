@@ -24,6 +24,14 @@ public interface FileSystem {
      */
     String user();
 
+    List<String> followers();
+
+    List<String> following();
+
+    void requestToFollow(String user);
+
+    void acceptFollower(String fromUser, boolean reciprocate);
+
     byte[] read(Path path);
 
     void write(Path path, byte[] data);

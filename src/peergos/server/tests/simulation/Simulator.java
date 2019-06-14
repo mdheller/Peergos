@@ -43,7 +43,7 @@ public class Simulator implements Runnable {
     private static final int MIN_FILE_LENGTH = 256;
     private static final int MAX_FILE_LENGTH = Integer.MAX_VALUE;
 
-    enum Simulation {READ, WRITE, MKDIR, RM, RMDIR}
+    enum Simulation {READ, WRITE, MKDIR, RM, RMDIR, GRANT, REVOKE}
 
     private final int opCount;
     private final Random random;
@@ -106,6 +106,13 @@ public class Simulator implements Runnable {
         testFileSystem.delete(path);
         referenceFileSystem.delete(path);
     }
+
+    private void grantFile() {
+//        Path path = getRandomExistingFile();
+//
+//        testFileSystem.grant(path);
+    }
+
 
     private Path mkdir() {
         String dirBaseName = getNextName();
@@ -192,6 +199,11 @@ public class Simulator implements Runnable {
                 break;
             case RMDIR:
                 rmdir();
+                break;
+            case GRANT:
+//                grant();
+                break;
+            case REVOKE:
                 break;
             default:
                 throw new IllegalStateException("Unexpected simulation " + simulation);
@@ -287,7 +299,9 @@ public class Simulator implements Runnable {
         PeergosFileSystemImpl peergosFileSystem = new PeergosFileSystemImpl(userContext);
 
         Path root = Files.createTempDirectory("test_filesystem");
-        NativeFileSystemImpl nativeFileSystem = new NativeFileSystemImpl(root, "some-user");
+        FileSystemRepository repo  = new FileSystemRepository.Impl();
+
+        NativeFileSystemImpl nativeFileSystem = new NativeFileSystemImpl(root, "some-user", repo);
 
         int opCount = 100;
 

@@ -10,6 +10,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -20,11 +21,17 @@ public class NativeFileSystemImpl implements FileSystem {
 
     private final Path root;
     private final String user;
-    private final AccessControl accessControl = new AccessControl.MemoryImpl();
+    private List<String> followers = new ArrayList<>();
+    private List<String> following = new ArrayList<>();
+    private List<String> requestsToFollow = new ArrayList<>();
 
-    public NativeFileSystemImpl(Path root, String user) {
+    private final AccessControl accessControl = new AccessControl.MemoryImpl();
+    private final FileSystemRepository repo;
+
+    public NativeFileSystemImpl(Path root, String user, FileSystemRepository repo) {
         this.root = root;
         this.user = user;
+        this.repo = repo;
         init();
     }
 
@@ -61,6 +68,24 @@ public class NativeFileSystemImpl implements FileSystem {
 
         if (! accessControl.can(path, user, permission))
             throw new IllegalStateException("User " + user() +" not permitted to "+ permission + " " + path);
+    }
+
+
+
+    @Override
+    public void acceptFollower(String fromUser, boolean reciprocate) {
+        if (! requestsToFollow.contains(fromUser))
+            throw new IllegalStateException("No follow request from "+ fromUser);
+        requestsToFollow.remove(fromUser);
+        followers.add(fromUser);
+        if (reciprocate) {
+            requestToFollow(fromUser);
+        }
+    }
+
+    @Override
+    public void requestToFollow(String user) {
+        ((NativeFileSystemImpl) repo.get(user)).requestsToFollow.add(user());
     }
 
     @Override
@@ -103,6 +128,17 @@ public class NativeFileSystemImpl implements FileSystem {
 
     }
 
+    @Override
+    public List<String> following() {
+        return new ArrayList<>(following);
+    }
+
+    @Override
+    public List<String> followers() {
+        return new ArrayList<>(followers);
+    }
+
+
     private boolean isOwner(Path path) {
         return user().equals(accessControl.getOwner(path));
     }
@@ -110,12 +146,16 @@ public class NativeFileSystemImpl implements FileSystem {
     @Override
     public void grant(Path path, String user, FileSystem.Permission permission) {
         ensureCan(path, permission, user);
+        if (! followers.contains(user))
+            throw new IllegalStateException("User "+ user + " is not  following "+ user());
         accessControl.add(path, user, permission);
     }
 
     @Override
     public void revoke(Path path, String user, FileSystem.Permission permission) {
         ensureCan(path, permission, user);
+        if (! followers.contains(user))
+            throw new IllegalStateException("User "+ user + " is not  following "+ user());
         accessControl.remove(path, user, permission);
     }
 

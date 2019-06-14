@@ -1,5 +1,7 @@
 package peergos.server.tests.simulation;
 
+import peergos.shared.crypto.symmetric.SymmetricKey;
+import peergos.shared.social.FollowRequestWithCipherText;
 import peergos.shared.user.UserContext;
 import peergos.shared.user.fs.*;
 import peergos.shared.util.Serialize;
@@ -22,6 +24,17 @@ public class PeergosFileSystemImpl implements FileSystem {
     public String user() {
         return userContext.username;
     }
+
+    @Override
+    public List<String> followers() {
+        return userContext.getFollowerNames().join().stream().collect(Collectors.toList());
+    }
+
+    @Override
+    public List<String> following() {
+        return userContext.getFollowing().join().stream().collect(Collectors.toList());
+    }
+
 
     private FileWrapper getPath(Path path) {
         return userContext.getByPath(path).join().get();
@@ -64,6 +77,27 @@ public class PeergosFileSystemImpl implements FileSystem {
                 .stream()
                 .map(e -> path.resolve(e.getName()))
                 .collect(Collectors.toList());
+    }
+
+    public void requestToFollow(String user) {
+        userContext.sendFollowRequest(user,  SymmetricKey.random()).join();
+    }
+
+    public void acceptFollower(String fromUser, boolean reciprocate) {
+        List<FollowRequestWithCipherText> requests = userContext.processFollowRequests().join();
+        for (FollowRequestWithCipherText request : requests) {
+            String requestFollower = request.getEntry().ownerName;
+            if (! fromUser.equals(requestFollower))
+                continue;
+            boolean accept = true;
+            userContext.sendReplyFollowRequest(request, accept, reciprocate);
+            return;
+        }
+
+        Set<String> requestFollowers = requests.stream()
+                .map(r -> r.getEntry().ownerName)
+                .collect(Collectors.toSet());
+        throw new IllegalStateException("No follow request from " + fromUser + ": available follow requests from "+ requestFollowers);
     }
 
     @Override
