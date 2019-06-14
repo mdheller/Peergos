@@ -278,8 +278,7 @@ public class Simulator implements Runnable {
         return isVerified;
     }
 
-    public static void main(String[] a) throws Exception {
-        Crypto crypto = Crypto.initJava();
+    public static NetworkAccess buildNetwork() throws Exception {
         Args args = buildArgs()
                 .with("useIPFS", "true")
                 .with("peergos.password", "testpassword")
@@ -289,10 +288,13 @@ public class Simulator implements Runnable {
         Main.PKI_INIT.main(args);
 
         NetworkAccess networkAccess = NetworkAccess.buildJava(new URL("http://localhost:" + args.getInt("port"))).get();
-
-
         LOG.info("***NETWORK READY***");
+        return networkAccess;
+    }
 
+    public static void main(String[] a) throws Exception {
+        Crypto crypto = Crypto.initJava();
+        NetworkAccess networkAccess = buildNetwork();
 
         UserContext userContext = PeergosNetworkUtils.ensureSignedUp("some-user", "some password", networkAccess, crypto);
 
