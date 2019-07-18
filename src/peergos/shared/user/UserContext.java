@@ -297,6 +297,11 @@ public class UserContext {
         }
     }
 
+    /**
+     *
+     * @param url This must be a serialized json object
+     * @return
+     */
     @JsMethod
     public EncryptedURL encryptURL(String url) {
         // pad url to avoid leaking length
@@ -308,6 +313,12 @@ public class UserContext {
         return new EncryptedURL(encoder.encodeToString(nonce), encoder.encodeToString(cipherText));
     }
 
+    /**
+     *
+     * @param cipherTextBase64
+     * @param nonceBase64
+     * @return the serialised json of a json object
+     */
     @JsMethod
     public String decryptURL(String cipherTextBase64, String nonceBase64) {
         Base64.Decoder decoder = Base64.getDecoder();
