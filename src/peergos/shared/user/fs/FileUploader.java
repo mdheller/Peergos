@@ -1,4 +1,5 @@
 package peergos.shared.user.fs;
+import java.util.function.BiFunction;
 import java.util.logging.*;
 
 import jsinterop.annotations.*;
@@ -72,15 +73,13 @@ public class FileUploader implements AutoCloseable {
                 baseKey, dataKey, parentLocation, parentparentKey, monitor, fileProperties, firstLocation);
     }
 
-    public CompletableFuture<Snapshot> uploadChunk(Snapshot current,
-                                                   Committer committer,
-                                                   NetworkAccess network,
-                                                   PublicKeyHash owner,
-                                                   SigningPrivateKeyAndPublicHash writer,
-                                                   long chunkIndex,
-                                                   MaybeMultihash ourExistingHash,
-                                                   ProgressConsumer<Long> monitor,
-                                                   Hasher hasher) {
+    private CompletableFuture<Triple<CryptreeNode, List<FragmentWithHash>, LocatedChunk>> uploadChunk(
+                                                      NetworkAccess network,
+                                                      PublicKeyHash owner,
+                                                      SigningPrivateKeyAndPublicHash writer,
+                                                      long chunkIndex,
+                                                      MaybeMultihash ourExistingHash,
+                                                      Hasher hasher) {
         LOG.info("uploading chunk: "+chunkIndex + " of "+name);
         long position = chunkIndex * Chunk.MAX_SIZE;
 
@@ -98,8 +97,8 @@ public class FileUploader implements AutoCloseable {
                         return FileProperties.calculateNextMapKey(props.streamSecret.get(), mapKey, hasher)
                                 .thenCompose(nextMapKey -> {
                                     Location nextLocation = new Location(owner, writer.publicKeyHash, nextMapKey);
-                                    return uploadChunk(current, committer, writer, props, parentLocation, parentparentKey, baseKey, locatedChunk,
-                                            nextLocation, Optional.empty(), hasher, network, monitor);
+                                    return uploadChunk(writer, props, parentLocation, parentparentKey, baseKey, locatedChunk,
+                                            nextLocation, hasher, network);
                                 });
                     });
         });
@@ -114,12 +113,63 @@ public class FileUploader implements AutoCloseable {
         long t1 = System.currentTimeMillis();
 
         List<Integer> input = IntStream.range(0, (int) nchunks).mapToObj(i -> Integer.valueOf(i)).collect(Collectors.toList());
-        return Futures.reduceAll(input, current, (cwd, i) -> uploadChunk(cwd, committer, network, owner, writer, i,
-                MaybeMultihash.empty(), monitor, hasher), (a, b) -> b)
-                .thenApply(x -> {
+
+        List<CompletableFuture<Triple<CryptreeNode, List<FragmentWithHash>, LocatedChunk>>> futs = input
+                .stream()
+                .map(i -> uploadChunk(network, owner, writer, i, MaybeMultihash.empty(), hasher))
+                .collect(Collectors.toList());
+
+        BiFunction<Pair<Boolean, Snapshot>, CompletableFuture<Triple<CryptreeNode, List<FragmentWithHash>, LocatedChunk>>, CompletableFuture<Pair<Boolean, Snapshot>>> composer = (a, b) -> {
+            if(a.left) {
+                return b.thenCompose(file -> {
+                    LocatedChunk chunk = file.right;
+                    CappedProgressConsumer progress = new CappedProgressConsumer(monitor, chunk.chunk.length());
+                    CryptreeNode metadata = file.left.withWriterLink(baseKey, Optional.empty());
+
+                    List<Fragment> fragments = file.middle.stream()
+                            .filter(f -> !f.hash.isIdentity())
+                            .map(f -> f.fragment)
+                            .collect(Collectors.toList());
+
+                    if (fragments.size() < file.middle.size())
+                        progress.accept((long) chunk.chunk.length());
+                    LOG.info("Uploading chunk with " + fragments.size() + " fragments\n");
+                    return IpfsTransaction.call(chunk.location.owner,
+                            tid -> network.uploadFragments(fragments, chunk.location.owner, writer, progress, tid)
+                                    .thenCompose(hashes -> network.uploadChunk(a.right, committer, metadata, chunk.location.owner,
+                                            chunk.chunk.mapKey(), writer, tid)),
+                            network.dhtClient);
+                }).thenApply(res -> new Pair<>(true, res));
+            }else{
+                return CompletableFuture.completedFuture(new Pair<>(false, null));
+            }
+        };
+        BiFunction<Pair<Boolean, Snapshot>, Pair<Boolean, Snapshot>, Pair<Boolean, Snapshot>> combiner = (a,b) -> {
+            return a.left & b.left ? new Pair(true, b.right) : new Pair(false, null);
+        };
+        CompletableFuture<Pair<Boolean, Snapshot>> result = Futures.reduceAll(futs, new Pair<>(true, current), composer, combiner);
+        return result.thenApply(x -> {
                     LOG.info("File encryption, upload took: " +(System.currentTimeMillis()-t1) + " mS");
-                    return x;
+                    return x.right;
                 });
+    }
+
+    private static CompletableFuture<Triple<CryptreeNode, List<FragmentWithHash>, LocatedChunk>> uploadChunk(
+                                                          SigningPrivateKeyAndPublicHash writer,
+                                                          FileProperties props,
+                                                          Location parentLocation,
+                                                          SymmetricKey parentparentKey,
+                                                          SymmetricKey baseKey,
+                                                          LocatedChunk chunk,
+                                                          Location nextChunkLocation,
+                                                          Hasher hasher,
+                                                          NetworkAccess network) {
+        if (! writer.publicKeyHash.equals(chunk.location.writer))
+            throw new IllegalStateException("Trying to write a chunk to the wrong signing key space!");
+        RelativeCapability nextChunk = RelativeCapability.buildSubsequentChunk(nextChunkLocation.getMapKey(), baseKey);
+        return CryptreeNode.createFile(chunk, chunk.existingHash, baseKey,
+                chunk.chunk.key(), props, chunk.chunk.data(), parentLocation, parentparentKey, nextChunk,
+                hasher, network.isJavascript());
     }
 
     public static CompletableFuture<Snapshot> uploadChunk(Snapshot current,

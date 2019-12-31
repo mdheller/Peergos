@@ -1004,6 +1004,29 @@ public class CryptreeNode implements Cborable {
                 });
     }
 
+    public static CompletableFuture<Triple<CryptreeNode, List<FragmentWithHash>, LocatedChunk>> createFile(
+            LocatedChunk chunk,
+            MaybeMultihash existingHash,
+            SymmetricKey parentKey,
+            SymmetricKey dataKey,
+            FileProperties props,
+            byte[] chunkData,
+            Location parentLocation,
+            SymmetricKey parentparentKey,
+            RelativeCapability nextChunk,
+            Hasher hasher,
+            boolean allowArrayCache) {
+        return FragmentedPaddedCipherText.build(dataKey, new CborObject.CborByteArray(chunkData),
+                MIN_FRAGMENT_SIZE, Fragment.MAX_LENGTH, hasher, allowArrayCache)
+                .thenApply(linksAndData -> {
+                    RelativeCapability toParent = new RelativeCapability(Optional.empty(), parentLocation.getMapKey(),
+                            parentparentKey, Optional.empty());
+                    CryptreeNode cryptree = createFile(existingHash, Optional.empty(), parentKey, dataKey, props,
+                            linksAndData.left, toParent, nextChunk);
+                    return new Triple<>(cryptree, linksAndData.right, chunk);
+                });
+    }
+
     public static CryptreeNode createFile(MaybeMultihash existingHash,
                                           Optional<SymmetricLinkToSigner> signerLink,
                                           SymmetricKey parentKey,
