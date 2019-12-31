@@ -67,25 +67,27 @@ public class FragmentedPaddedCipherText implements Cborable {
         if (paddingBlockSize < 1)
             throw new IllegalStateException("Invalid padding block size: " + paddingBlockSize);
         byte[] nonce = from.createNonce();
-        byte[] cipherText = from.encrypt(pad(secret.serialize(), paddingBlockSize), nonce);
+        return from.encryptAsync(pad(secret.serialize(), paddingBlockSize), nonce).thenCompose(cipherText -> {
+            if (cipherText.length <= 4096 + TweetNaCl.SECRETBOX_OVERHEAD_BYTES) {
+                // use inline identity hash for small amount of data (small files or directories)
+                FragmentWithHash frag = new FragmentWithHash(new Fragment(cipherText), hasher.identityHash(cipherText, true));
+                return Futures.of(new Pair<>(new FragmentedPaddedCipherText(nonce, Collections.singletonList(frag.hash)), Collections.singletonList(frag)));
+            }
 
-        if (cipherText.length <= 4096 + TweetNaCl.SECRETBOX_OVERHEAD_BYTES) {
-            // use inline identity hash for small amount of data (small files or directories)
-            FragmentWithHash frag = new FragmentWithHash(new Fragment(cipherText), hasher.identityHash(cipherText, true));
-            return Futures.of(new Pair<>(new FragmentedPaddedCipherText(nonce, Collections.singletonList(frag.hash)), Collections.singletonList(frag)));
-        }
+            byte[][] split = split(cipherText, maxFragmentSize, allowArrayCache);
 
-        byte[][] split = split(cipherText, maxFragmentSize, allowArrayCache);
+            return Futures.combineAllInOrder(Arrays.stream(split)
+                    .map(d -> hasher.hash(d, true).thenApply(h -> new FragmentWithHash(new Fragment(d), h)))
+                    .collect(Collectors.toList()))
+                    .thenApply(frags -> {
+                        List<Multihash> hashes = frags.stream()
+                                .map(f -> f.hash)
+                                .collect(Collectors.toList());
+                        return new Pair<>(new FragmentedPaddedCipherText(nonce, hashes), frags);
+                    });
+        });
 
-        return Futures.combineAllInOrder(Arrays.stream(split)
-                .map(d -> hasher.hash(d, true).thenApply(h -> new FragmentWithHash(new Fragment(d), h)))
-                .collect(Collectors.toList()))
-                .thenApply(frags -> {
-                    List<Multihash> hashes = frags.stream()
-                            .map(f -> f.hash)
-                            .collect(Collectors.toList());
-                    return new Pair<>(new FragmentedPaddedCipherText(nonce, hashes), frags);
-                });
+
     }
 
     public <T> CompletableFuture<T> getAndDecrypt(SymmetricKey from,
@@ -93,7 +95,7 @@ public class FragmentedPaddedCipherText implements Cborable {
                                                   NetworkAccess network,
                                                   ProgressConsumer<Long> monitor) {
         return network.downloadFragments(cipherTextFragments, monitor, 1.0)
-                .thenApply(fargs -> new CipherText(nonce, recombine(fargs)).decrypt(from, fromCbor));
+                .thenCompose(fargs -> new CipherText(nonce, recombine(fargs)).decryptAsync(from, fromCbor));
     }
 
     private static byte[][] generateCache() {

@@ -4,6 +4,7 @@ import peergos.shared.cbor.*;
 import peergos.shared.crypto.symmetric.*;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.*;
 
 public class CipherText implements Cborable {
@@ -42,5 +43,9 @@ public class CipherText implements Cborable {
     public <T> T decrypt(SymmetricKey from, Function<CborObject, T> fromCbor) {
         byte[] secret = from.decrypt(cipherText, nonce);
         return fromCbor.apply(CborObject.fromByteArray(secret));
+    }
+
+    public <T> CompletableFuture<T> decryptAsync(SymmetricKey from, Function<CborObject, T> fromCbor) {
+        return from.decryptAsync(cipherText, nonce).thenApply(secret -> fromCbor.apply(CborObject.fromByteArray(secret)));
     }
 }
